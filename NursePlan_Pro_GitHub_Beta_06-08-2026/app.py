@@ -441,12 +441,87 @@ def auth_error_text(error: Exception, action: str) -> str:
 
 
 def password_reset_redirect_url() -> str:
+    app_url = configured_app_url()
+    return f"{app_url.rstrip('/')}/?password_recovery=1"
+
+
+def configured_app_url() -> str:
+    """Liefert die öffentliche App-Adresse ohne Pfad oder abschließenden Slash."""
     try:
         configured_url = str(st.secrets.get("APP_URL", "") or "").strip()
     except Exception:
         configured_url = ""
-    app_url = configured_url or "http://localhost:8501"
-    return f"{app_url.rstrip('/')}/?password_recovery=1"
+    return (configured_url or "http://localhost:8501").rstrip("/")
+
+
+def google_oauth_redirect_url() -> str:
+    return f"{configured_app_url()}/?oauth_callback=google"
+
+
+def google_oauth_url() -> str:
+    """Erstellt die Supabase-Adresse für Anmeldung und Registrierung mit Google."""
+    response = get_supabase_client().auth.sign_in_with_oauth(
+        {
+            "provider": "google",
+            "options": {"redirect_to": google_oauth_redirect_url()},
+        }
+    )
+    url = str(getattr(response, "url", "") or "").strip()
+    if not url:
+        raise RuntimeError("Die Google-Anmeldung konnte nicht gestartet werden.")
+    return url
+
+
+def show_google_oauth_callback() -> None:
+    """Übernimmt nach Google OAuth den Supabase-Refresh-Token in das App-Cookie."""
+    secure_cookie = "true" if auth_cookie_is_secure() else "false"
+    callback_html = r"""
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+(() => {
+  const fragment = new URLSearchParams(window.parent.location.hash.slice(1));
+  const refreshToken = fragment.get("refresh_token") || "";
+  const secureCookie = __SECURE_COOKIE__;
+
+  if (!refreshToken) {
+    window.parent.history.replaceState({}, "", `${window.parent.location.pathname}?oauth_error=1`);
+    window.parent.location.reload();
+    return;
+  }
+
+  let cookie = "__COOKIE_NAME__=" + encodeURIComponent(refreshToken)
+    + "; Path=/; Max-Age=__COOKIE_MAX_AGE__; SameSite=Lax";
+  if (secureCookie) cookie += "; Secure";
+  window.parent.document.cookie = cookie;
+  window.parent.history.replaceState({}, "", `${window.parent.location.pathname}?oauth_complete=1`);
+  window.parent.location.reload();
+})();
+</script>
+</body>
+</html>
+"""
+    callback_html = callback_html.replace("__SECURE_COOKIE__", secure_cookie)
+    callback_html = callback_html.replace("__COOKIE_NAME__", AUTH_COOKIE_NAME)
+    callback_html = callback_html.replace(
+        "__COOKIE_MAX_AGE__", str(AUTH_COOKIE_DAYS * 24 * 60 * 60)
+    )
+
+    left, middle, right = st.columns([1, 1.25, 1])
+    with middle:
+        st.markdown(
+            """
+            <div class="np-card" style="text-align:center;margin-top:3rem;">
+                <div style="font-size:2.2rem;">🏥</div>
+                <div style="font-size:1.55rem;font-weight:800;">Google-Anmeldung wird abgeschlossen</div>
+                <div style="color:#667085;margin-top:.35rem;">Einen Moment bitte …</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        components.html(callback_html, height=1, scrolling=False)
 
 
 def show_password_recovery_page() -> None:
@@ -613,6 +688,10 @@ def show_auth_page() -> None:
         )
         if st.session_state.pop("password_reset_success", False):
             st.success("Dein Passwort wurde geändert. Du kannst dich jetzt anmelden.")
+        if st.session_state.pop("google_oauth_error", False):
+            st.error(
+                "Die Google-Anmeldung wurde abgebrochen oder konnte nicht abgeschlossen werden."
+            )
 
         if st.session_state.get("auth_show_password_reset"):
             st.markdown("#### Passwort zurücksetzen")
@@ -655,6 +734,34 @@ def show_auth_page() -> None:
                 "Der Link kann nur einmal verwendet werden und läuft nach kurzer Zeit ab."
             )
             return
+
+        try:
+            google_url = google_oauth_url()
+        except Exception:
+            google_url = ""
+
+        if google_url:
+            safe_google_url = escape(google_url, {'"': "&quot;"})
+            st.markdown(
+                f"""
+                <a href="{safe_google_url}" target="_self" style="
+                    display:flex;align-items:center;justify-content:center;gap:.7rem;
+                    width:100%;padding:.78rem 1rem;border:1px solid #cfd6e2;
+                    border-radius:10px;background:#fff;color:#172033;
+                    text-decoration:none;font-weight:750;box-shadow:0 2px 5px rgba(16,42,67,.05);">
+                    <span style="font-size:1.12rem;font-weight:900;color:#4285f4;">G</span>
+                    Mit Google anmelden
+                </a>
+                <div style="display:flex;align-items:center;gap:.75rem;margin:1rem 0;color:#98a2b3;">
+                    <div style="height:1px;background:#e5e9f0;flex:1;"></div>
+                    <span style="font-size:.82rem;">oder mit E-Mail</span>
+                    <div style="height:1px;background:#e5e9f0;flex:1;"></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.warning("Die Google-Anmeldung ist vorübergehend nicht verfügbar.")
 
         login_tab, register_tab = st.tabs(["Anmelden", "Konto erstellen"])
 
@@ -771,6 +878,22 @@ except SupabaseConfigurationError as exc:
         "Niemals den Secret- oder service_role-Schlüssel verwenden."
     )
     st.stop()
+
+# Nach der Rückkehr von Google liegt die Supabase-Sitzung kurz im URL-Fragment.
+# Ein kleines Browser-Hilfsfenster speichert nur den Refresh-Token im vorhandenen
+# NursePlan-Cookie und entfernt anschließend sämtliche Token aus der Adresse.
+if str(st.query_params.get("oauth_callback", "")).casefold() == "google":
+    show_google_oauth_callback()
+    st.stop()
+
+if str(st.query_params.get("oauth_complete", "")).casefold() == "1":
+    st.session_state.pop("auth_logout_requested", None)
+    st.session_state.pop("auth_restore_failed", None)
+    st.query_params.clear()
+
+if str(st.query_params.get("oauth_error", "")).casefold() == "1":
+    st.session_state.google_oauth_error = True
+    st.query_params.clear()
 
 # Nach einer erfolgreichen Änderung kehrt der Browser ohne Sitzung zur Anmeldung zurück.
 if str(st.query_params.get("password_reset", "")).casefold() == "success":
