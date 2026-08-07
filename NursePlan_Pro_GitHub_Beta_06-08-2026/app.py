@@ -3,6 +3,7 @@ import json
 import re
 from datetime import date, datetime, time, timedelta
 from io import BytesIO
+from urllib.parse import urlencode
 from uuid import uuid4
 from xml.sax.saxutils import escape
 
@@ -495,17 +496,21 @@ def google_oauth_redirect_url() -> str:
 
 
 def google_oauth_url() -> str:
-    """Erstellt die Supabase-Adresse für Anmeldung und Registrierung mit Google."""
-    response = get_supabase_client().auth.sign_in_with_oauth(
+    """Erstellt einen Browser-OAuth-Link im Supabase-Implicit-Flow.
+
+    Der Python-Client erzeugt sonst einen PKCE-Code. Da Streamlit den Link in
+    einem neuen Browser-Tab öffnet, fehlt dort der ursprüngliche PKCE-Verifier.
+    Ohne Code-Challenge liefert Supabase die neue Sitzung sicher im URL-Fragment,
+    das anschließend ausschließlich im Browser verarbeitet wird.
+    """
+    supabase_url, _ = get_supabase_public_config()
+    query = urlencode(
         {
             "provider": "google",
-            "options": {"redirect_to": google_oauth_redirect_url()},
+            "redirect_to": google_oauth_redirect_url(),
         }
     )
-    url = str(getattr(response, "url", "") or "").strip()
-    if not url:
-        raise RuntimeError("Die Google-Anmeldung konnte nicht gestartet werden.")
-    return url
+    return f"{supabase_url}/auth/v1/authorize?{query}"
 
 
 def show_google_oauth_callback(show_status: bool = True) -> None:
