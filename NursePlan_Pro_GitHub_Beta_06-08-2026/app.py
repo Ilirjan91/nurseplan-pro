@@ -394,7 +394,16 @@ def auth_cookie_is_secure() -> bool:
 
 
 def saved_auth_cookie() -> str:
-    return str(auth_cookie_manager.get(AUTH_COOKIE_NAME) or "").strip()
+    value = auth_cookie_manager.get(AUTH_COOKIE_NAME)
+    if not value:
+        return ""
+    # Der Browser-Cookie-Manager wandelt JSON-Cookies automatisch in ein
+    # Python-Dictionary um. Für die weitere Verarbeitung wieder als gültiges
+    # JSON serialisieren; str(dict) wäre kein gültiges JSON und würde sonst
+    # fälschlich als Refresh-Token behandelt.
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value).strip()
 
 
 def adopt_google_user_session(access_token: str, refresh_token: str) -> str:
@@ -420,6 +429,14 @@ def saved_auth_tokens() -> tuple[str, str]:
     """Liest entweder eine neue OAuth-Sitzung oder einen normalen Refresh-Token."""
     raw_value = saved_auth_cookie()
     if not raw_value:
+        return "", ""
+    # Neue Google-Sitzungen werden bewusst als einfacher Text gespeichert.
+    # So kann der Browser-Cookie-Manager den Inhalt nicht automatisch in ein
+    # Objekt umwandeln. Access- und Refresh-Token enthalten kein Pipe-Zeichen.
+    if raw_value.startswith("oauth_v1|"):
+        parts = raw_value.split("|", 2)
+        if len(parts) == 3 and parts[1] and parts[2]:
+            return parts[1].strip(), parts[2].strip()
         return "", ""
     try:
         oauth_session = json.loads(raw_value)
@@ -475,6 +492,22 @@ def auth_error_text(error: Exception, action: str) -> str:
     if action == "password_reset":
         return "Die E-Mail konnte gerade nicht gesendet werden. Bitte versuche es später erneut."
     return "Die Registrierung ist gerade nicht möglich. Bitte versuche es erneut."
+
+
+def google_oauth_session_error_text(error: Exception) -> str:
+    """Zeigt einen hilfreichen Hinweis, ohne Token oder andere Secrets auszugeben."""
+    message = str(error).casefold()
+    if "refresh token" in message:
+        return (
+            "Supabase hat die Google-Sitzung nicht angenommen "
+            "(Refresh-Token ungültig oder nicht gefunden)."
+        )
+    if "jwt" in message or "access token" in message or "user" in message:
+        return "Supabase konnte das Google-Konto nicht bestätigen (Zugriffstoken ungültig)."
+    return (
+        "Die Google-Sitzung konnte serverseitig nicht übernommen werden "
+        f"({type(error).__name__})."
+    )
 
 
 def password_reset_redirect_url() -> str:
@@ -548,10 +581,7 @@ def show_google_oauth_callback(show_status: bool = True) -> None:
     return;
   }
 
-  const oauthSession = JSON.stringify({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
+  const oauthSession = `oauth_v1|${accessToken}|${refreshToken}`;
   let cookie = "__COOKIE_NAME__=" + encodeURIComponent(oauthSession)
     + "; Path=/; Max-Age=120; SameSite=Lax";
   if (secureCookie) cookie += "; Secure";
@@ -756,6 +786,11 @@ def show_auth_page() -> None:
             st.error(
                 "Die Google-Anmeldung wurde abgebrochen oder konnte nicht abgeschlossen werden."
             )
+        google_session_error = st.session_state.pop(
+            "google_oauth_session_error", ""
+        )
+        if google_session_error:
+            st.error(google_session_error)
 
         if st.session_state.get("auth_show_password_reset"):
             st.markdown("#### Passwort zurücksetzen")
@@ -990,12 +1025,16 @@ if (
                 rotated_refresh_token = restore_user_session(stored_refresh_token)
             st.session_state.remember_login = True
             save_auth_cookie(rotated_refresh_token)
-        except Exception:
+        except Exception as exc:
             clear_local_auth_state()
             # Ein abgelaufener oder bereits rotierter Refresh-Token darf nicht
             # bei jedem neuen Seitenaufruf erneut an Supabase gesendet werden.
             delete_auth_cookie()
             st.session_state.auth_restore_failed = True
+            if stored_access_token:
+                st.session_state.google_oauth_session_error = (
+                    google_oauth_session_error_text(exc)
+                )
 
 if is_authenticated() and st.session_state.get("remember_login"):
     current_refresh_token = current_session_refresh_token()
