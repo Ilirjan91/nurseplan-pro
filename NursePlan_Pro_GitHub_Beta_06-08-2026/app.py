@@ -523,17 +523,27 @@ def show_google_oauth_callback(show_status: bool = True) -> None:
 <body>
 <script>
 (() => {
-  const fragment = new URLSearchParams(window.parent.location.hash.slice(1));
+  // Streamlit Cloud zeigt die App in einem zusätzlichen äußeren Fenster an.
+  // Supabase schreibt die Sitzung in dessen URL, nicht in die URL des
+  // eingebetteten HTML-Hilfsfensters.
+  let appWindow = window.parent;
+  try {
+    if (window.top && window.top.location.href) appWindow = window.top;
+  } catch (_) {
+    // Lokal gibt es kein zusätzliches Streamlit-Cloud-Fenster.
+  }
+
+  const fragment = new URLSearchParams(appWindow.location.hash.slice(1));
   const accessToken = fragment.get("access_token") || "";
   const refreshToken = fragment.get("refresh_token") || "";
   const secureCookie = __SECURE_COOKIE__;
-  const callbackRequested = new URLSearchParams(window.parent.location.search)
+  const callbackRequested = new URLSearchParams(appWindow.location.search)
     .get("oauth_callback") === "google";
 
   if (!accessToken || !refreshToken) {
     if (callbackRequested) {
-      window.parent.history.replaceState({}, "", `${window.parent.location.pathname}?oauth_error=1`);
-      window.parent.location.reload();
+      appWindow.history.replaceState({}, "", `${appWindow.location.pathname}?oauth_error=1`);
+      appWindow.location.reload();
     }
     return;
   }
@@ -545,9 +555,9 @@ def show_google_oauth_callback(show_status: bool = True) -> None:
   let cookie = "__COOKIE_NAME__=" + encodeURIComponent(oauthSession)
     + "; Path=/; Max-Age=120; SameSite=Lax";
   if (secureCookie) cookie += "; Secure";
-  window.parent.document.cookie = cookie;
-  window.parent.history.replaceState({}, "", `${window.parent.location.pathname}?oauth_complete=1`);
-  window.parent.location.reload();
+  appWindow.document.cookie = cookie;
+  appWindow.history.replaceState({}, "", `${appWindow.location.pathname}?oauth_complete=1`);
+  appWindow.location.reload();
 })();
 </script>
 </body>
