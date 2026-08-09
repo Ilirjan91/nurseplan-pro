@@ -2159,6 +2159,85 @@ def matrix_to_plan(matrix: pd.DataFrame, old_plan):
     return result
 
 
+def apply_data_editor_changes(matrix: pd.DataFrame, editor_state) -> pd.DataFrame:
+    """Überträgt die noch nicht gespeicherten Änderungen eines data_editor.
+
+    Streamlit speichert bei einem ``st.data_editor`` nur die geänderten Zellen
+    im Session State. Für die Live-Stundenanzeige brauchen wir daraus wieder
+    die vollständige Monatsmatrix.
+    """
+    updated = matrix.copy(deep=True)
+    if not isinstance(editor_state, dict):
+        return updated
+
+    edited_rows = editor_state.get("edited_rows", {})
+    if not isinstance(edited_rows, dict):
+        return updated
+
+    for row_index, changes in edited_rows.items():
+        try:
+            position = int(row_index)
+        except (TypeError, ValueError):
+            continue
+        if position < 0 or position >= len(updated) or not isinstance(changes, dict):
+            continue
+        for column, value in changes.items():
+            if column in updated.columns:
+                updated.iat[position, updated.columns.get_loc(column)] = value
+    return updated
+
+
+def update_matrix_hours(matrix: pd.DataFrame, plan, employees, settings) -> pd.DataFrame:
+    """Berechnet Soll, Ist und Rest für eine bearbeitete Monatsmatrix neu."""
+    updated = matrix.copy(deep=True)
+    stats = calculate_hours(plan, employees, settings)
+    stats_by_name = {
+        str(row["Mitarbeitende"]).casefold(): row
+        for _, row in stats.iterrows()
+    }
+
+    for row_index, row in updated.iterrows():
+        name = str(row.get("Mitarbeitende", "")).strip()
+        stat = stats_by_name.get(name.casefold())
+        if stat is None:
+            continue
+        target = float(stat["Soll"])
+        actual = float(stat["Ist"])
+        updated.at[row_index, "Soll"] = target
+        updated.at[row_index, "Ist"] = actual
+        updated.at[row_index, "Rest"] = round(target - actual, 1)
+    return updated
+
+
+def reset_month_editor_draft() -> None:
+    """Verwirft eine alte Editor-Vorschau und erzwingt einen frischen Editor."""
+    st.session_state.pop("dienstplan_editor_draft", None)
+    st.session_state.pop("dienstplan_editor_draft_plan", None)
+    st.session_state.dienstplan_editor_version += 1
+
+
+def refresh_month_editor_draft(
+    editor_key: str,
+    displayed_matrix: pd.DataFrame,
+    current_plan,
+    employees,
+    settings,
+) -> None:
+    """Aktualisiert die Stunden direkt nach jeder Auswahl im Monatseditor."""
+    editor_state = st.session_state.get(editor_key, {})
+    draft_matrix = apply_data_editor_changes(displayed_matrix, editor_state)
+    draft_plan = matrix_to_plan(draft_matrix, current_plan)
+    draft_matrix = update_matrix_hours(
+        draft_matrix,
+        draft_plan,
+        employees,
+        settings,
+    )
+    st.session_state.dienstplan_editor_draft = draft_matrix
+    st.session_state.dienstplan_editor_draft_plan = draft_plan
+    st.session_state.dienstplan_editor_version += 1
+
+
 
 def replace_name_in_plan(plan, old_name: str, new_name: str):
     target = old_name.casefold()
@@ -3776,7 +3855,7 @@ elif page == "Vorlagen":
                             )
                             st.session_state.aktiver_dienstplan_id = None
                             st.session_state.dienstplan_name = f"Dienstplan {MONATSNAMEN[int(copy_month)]} {int(copy_year)}"
-                            st.session_state.dienstplan_editor_version += 1
+                            reset_month_editor_draft()
                             st.success("Der Monatsplan wurde kopiert und geöffnet.")
                             st.rerun()
 
@@ -3821,7 +3900,7 @@ elif page == "Dienstplan":
                     st.session_state.aktiver_dienstplan_id = None
                     st.session_state.dienstplan_name = f"Dienstplan {MONATSNAMEN[int(selected_month)]} {int(selected_year)}"
                     st.session_state.auto_plan_result = None
-                    st.session_state.dienstplan_editor_version += 1
+                    reset_month_editor_draft()
                     st.rerun()
             with auto_column:
                 if st.button("Automatisch erstellen", type="primary", width="stretch"):
@@ -3836,7 +3915,7 @@ elif page == "Dienstplan":
                     st.session_state.aktiver_dienstplan_id = None
                     st.session_state.dienstplan_name = f"Dienstplan {MONATSNAMEN[int(selected_month)]} {int(selected_year)}"
                     st.session_state.auto_plan_result = automatic_result
-                    st.session_state.dienstplan_editor_version += 1
+                    reset_month_editor_draft()
                     st.rerun()
 
         with copy_tab:
@@ -3880,7 +3959,7 @@ elif page == "Dienstplan":
                         st.session_state.aktiver_dienstplan_id = None
                         st.session_state.dienstplan_name = f"Dienstplan {MONATSNAMEN[int(copy_month)]} {int(copy_year)}"
                         st.session_state.auto_plan_result = None
-                        st.session_state.dienstplan_editor_version += 1
+                        reset_month_editor_draft()
                         st.rerun()
 
         with load_tab:
@@ -3905,7 +3984,7 @@ elif page == "Dienstplan":
                             st.session_state.aktiver_dienstplan_id = loaded["id"]
                             st.session_state.dienstplan_name = loaded["name"]
                             st.session_state.auto_plan_result = None
-                            st.session_state.dienstplan_editor_version += 1
+                            reset_month_editor_draft()
                             st.rerun()
                 with c2:
                     if st.button("Gespeicherten Plan löschen", width="stretch"):
@@ -3952,7 +4031,20 @@ elif page == "Dienstplan":
                 ["✏️ Plan bearbeiten", "👀 Lesbare Ansicht", "✅ Prüfung und Stunden", "💾 Speichern und Export"]
             )
 
-            matrix = plan_to_matrix(current_plan, employees, settings)
+            base_matrix = plan_to_matrix(current_plan, employees, settings)
+            draft_matrix = st.session_state.get("dienstplan_editor_draft")
+            same_draft_layout = (
+                isinstance(draft_matrix, pd.DataFrame)
+                and list(draft_matrix.columns) == list(base_matrix.columns)
+                and draft_matrix["Mitarbeitende"].astype(str).tolist()
+                == base_matrix["Mitarbeitende"].astype(str).tolist()
+            )
+            if same_draft_layout:
+                matrix = draft_matrix.copy(deep=True)
+            else:
+                if draft_matrix is not None:
+                    reset_month_editor_draft()
+                matrix = base_matrix
             day_columns = [column for column in matrix.columns if re.match(r"^\d{2} ", str(column))]
             column_config = {
                 "Mitarbeitende": st.column_config.TextColumn("Mitarbeitende", disabled=True, width="medium"),
@@ -3976,7 +4068,11 @@ elif page == "Dienstplan":
                 )
 
             with edit_plan_tab:
-                st.caption("Klicke in ein Tagesfeld und wähle den Dienst. Danach unten auf „Änderungen übernehmen“ klicken.")
+                st.caption(
+                    "Klicke in ein Tagesfeld und wähle den Dienst. Ist und Rest "
+                    "werden sofort aktualisiert. Danach auf „Änderungen übernehmen“ klicken."
+                )
+                editor_key = f"month_editor_{st.session_state.dienstplan_editor_version}"
                 edited_matrix = st.data_editor(
                     matrix,
                     hide_index=True,
@@ -3984,7 +4080,9 @@ elif page == "Dienstplan":
                     num_rows="fixed",
                     disabled=["Mitarbeitende", "Soll", "Ist", "Rest"],
                     column_config=column_config,
-                    key=f"month_editor_{st.session_state.dienstplan_editor_version}",
+                    key=editor_key,
+                    on_change=refresh_month_editor_draft,
+                    args=(editor_key, matrix, current_plan, employees, settings),
                     height=min(760, 105 + len(employees) * 38),
                 )
                 preview_plan = matrix_to_plan(edited_matrix, current_plan)
@@ -3999,7 +4097,7 @@ elif page == "Dienstplan":
                         st.error(f"Noch nicht übernommen: {names} wäre über den Sollstunden.")
                     else:
                         st.session_state.dienstplan_vorlage = preview_plan
-                        st.session_state.dienstplan_editor_version += 1
+                        reset_month_editor_draft()
                         st.rerun()
 
             # data_editor exists even when another tab is selected, therefore preview_plan is available.
