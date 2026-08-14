@@ -25,6 +25,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 
+from solver_v2 import OrToolsUnavailableError, solve_month_v2
+
 from database import (
     SupabaseConfigurationError,
     add_feedback,
@@ -149,6 +151,7 @@ DEFAULT_SETTINGS = {
     "regel_nachtblock_aktiv": True,
     "regel_wochenende_zuerst_aktiv": True,
     "regel_wochenende_gleich_aktiv": True,
+    "solver_v2_max_seconds": 20.0,
     "eigene_planungsregeln": [],
 }
 
@@ -3101,6 +3104,18 @@ def create_automatic_month(year: int, month: int, employees, settings, vorgaben)
     )
 
 
+def create_intelligent_month_v2(year: int, month: int, employees, settings, vorgaben):
+    """Erstellt den Monatsplan global optimiert mit Google OR-Tools."""
+    prepared_plan = apply_vorgaben(year, month, employees, vorgaben)
+    return measured_call(
+        "Intelligente Planung V2",
+        solve_month_v2,
+        prepared_plan,
+        employees,
+        settings,
+    )
+
+
 def safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9ÄÖÜäöüß_-]+", "_", str(name).strip())
     return cleaned.strip("_") or "Dienstplan"
@@ -4036,7 +4051,7 @@ elif page == "Dienstplan":
                     step=1,
                     key="new_plan_year",
                 )
-            open_column, auto_column = st.columns(2)
+            open_column, classic_column, intelligent_column = st.columns([1, 1, 1.2])
             with open_column:
                 if st.button("Leeren Monatsplan öffnen", width="stretch"):
                     latest_vorgaben = get_vorgaben()
@@ -4053,8 +4068,8 @@ elif page == "Dienstplan":
                     )
                     reset_month_editor_draft()
                     st.rerun()
-            with auto_column:
-                if st.button("Automatisch erstellen", type="primary", width="stretch"):
+            with classic_column:
+                if st.button("Klassisch planen", width="stretch"):
                     latest_vorgaben = get_vorgaben()
                     automatic_plan, automatic_result = create_automatic_month(
                         int(selected_year),
@@ -4073,6 +4088,40 @@ elif page == "Dienstplan":
                     )
                     reset_month_editor_draft()
                     st.rerun()
+            with intelligent_column:
+                if st.button("✨ Intelligent planen (V2)", type="primary", width="stretch"):
+                    latest_vorgaben = get_vorgaben()
+                    try:
+                        with st.spinner("OR-Tools sucht den bestmöglichen Dienstplan …"):
+                            automatic_plan, automatic_result = create_intelligent_month_v2(
+                                int(selected_year),
+                                int(selected_month),
+                                employees,
+                                settings,
+                                latest_vorgaben,
+                            )
+                    except OrToolsUnavailableError as exc:
+                        st.error(str(exc))
+                    else:
+                        if automatic_result.get("status") not in {"OPTIMAL", "FEASIBLE"}:
+                            st.error(
+                                "Die intelligente Planung konnte keinen gültigen Plan erstellen. "
+                                "Prüfe bitte die aktiven Regeln und die verfügbaren Mitarbeitenden."
+                            )
+                        else:
+                            invalidate_account_cache("Abwesenheiten")
+                            st.session_state.dienstplan_vorlage = automatic_plan
+                            st.session_state.aktiver_dienstplan_id = None
+                            st.session_state.dienstplan_name = (
+                                f"Dienstplan V2 {MONATSNAMEN[int(selected_month)]} "
+                                f"{int(selected_year)}"
+                            )
+                            st.session_state.auto_plan_result = automatic_result
+                            st.session_state.month_open_message = (
+                                f"{count_absence_days(automatic_plan)} Abwesenheitstage wurden übernommen."
+                            )
+                            reset_month_editor_draft()
+                            st.rerun()
 
         with copy_tab:
             if not saved_plans:
@@ -4184,9 +4233,16 @@ elif page == "Dienstplan":
             auto_result = st.session_state.get("auto_plan_result")
             if auto_result:
                 shortages = auto_result.get("shortages", [])
+                engine = str(auto_result.get("engine", "Klassische Planung"))
+                solve_seconds = auto_result.get("solve_seconds")
+                duration_text = (
+                    f" · Berechnung {float(solve_seconds):.2f} Sekunden"
+                    if solve_seconds is not None
+                    else ""
+                )
                 st.success(
-                    f'Automatisch eingetragen: {int(auto_result.get("assigned", 0))} Dienste. '
-                    "Gespeicherte Abwesenheiten wurden nicht überschrieben."
+                    f'{engine}: {int(auto_result.get("assigned", 0))} Dienste eingetragen'
+                    f'{duration_text}. Gespeicherte Abwesenheiten wurden nicht überschrieben.'
                 )
                 if shortages:
                     with st.expander(f"Offene Besetzungen: {len(shortages)}"):
