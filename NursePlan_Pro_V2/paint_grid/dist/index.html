@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NursePlan Pinsel-Editor</title>
+  <style>
+    :root {
+      font-family: Inter, "Source Sans 3", Arial, sans-serif;
+      color: #10233f;
+      background: transparent;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 2px; background: transparent; }
+    button { font: inherit; }
+
+    .np-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .np-toolbar-title { font-size: 13px; font-weight: 750; margin-right: 3px; }
+    .np-spacer { flex: 1; }
+
+    .np-brush,
+    .np-action {
+      min-height: 34px;
+      border: 1px solid #cfd7e4;
+      border-radius: 9px;
+      background: #fff;
+      color: #10233f;
+      padding: 5px 12px;
+      cursor: pointer;
+      font-weight: 750;
+    }
+    .np-brush.active {
+      outline: 3px solid rgba(35, 104, 235, .24);
+      border-color: #2368eb;
+      transform: translateY(-1px);
+    }
+    .np-action.secondary { font-weight: 650; color: #475467; }
+    .np-action:hover, .np-brush:hover { border-color: #2368eb; }
+
+    .np-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 285px;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .np-grid-wrap {
+      width: 100%;
+      overflow: auto;
+      border: 1px solid #dfe4ec;
+      border-radius: 12px;
+      background: #fff;
+    }
+    .np-grid {
+      width: max-content;
+      min-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      table-layout: fixed;
+      user-select: none;
+    }
+    .np-grid th,
+    .np-grid td {
+      border-right: 1px solid #e5e9f0;
+      border-bottom: 1px solid #e5e9f0;
+    }
+    .np-grid tr:last-child th,
+    .np-grid tr:last-child td { border-bottom: 0; }
+    .np-grid th:last-child,
+    .np-grid td:last-child { border-right: 0; }
+
+    .np-name-cell {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      width: 118px;
+      min-width: 118px;
+      max-width: 118px;
+      height: 32px;
+      padding: 0 7px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: #fff;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .np-name-header {
+      z-index: 5;
+      background: #f7f9fc;
+      color: #526176;
+    }
+    .np-stat-cell {
+      position: sticky;
+      z-index: 3;
+      width: 44px;
+      min-width: 44px;
+      max-width: 44px;
+      height: 32px;
+      padding: 0 3px;
+      background: #fbfcfe;
+      color: #344054;
+      text-align: right;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .np-stat-cell:nth-child(2) { left: 118px; }
+    .np-stat-cell:nth-child(3) { left: 162px; }
+    .np-stat-cell:nth-child(4) { left: 206px; }
+    .np-stat-header {
+      top: 0;
+      z-index: 5;
+      height: 44px;
+      background: #f7f9fc;
+      color: #526176;
+      text-align: center;
+      font-weight: 700;
+    }
+    .np-stat-actual { color: #174ea6; font-weight: 750; }
+    .np-stat-rest { font-weight: 750; }
+
+    .np-day {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      width: 29px;
+      min-width: 29px;
+      max-width: 29px;
+      height: 44px;
+      background: #f7f9fc;
+      text-align: center;
+      color: #526176;
+      font-size: 11px;
+    }
+    .np-day span,
+    .np-day small { display: block; line-height: 14px; }
+    .np-day small { font-size: 9px; font-weight: 600; }
+
+    .np-day.weekend {
+      background: #fce58d;
+      color: #6f4b00;
+      box-shadow: inset 1px 0 #e2b93b, inset -1px 0 #e2b93b;
+    }
+
+    .np-traffic {
+      display: block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin: 1px auto 0;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, .12);
+    }
+    .np-traffic.green { background: #22c55e; }
+    .np-traffic.yellow { background: #f59e0b; }
+    .np-traffic.red { background: #ef4444; }
+
+    .np-cell {
+      width: 29px;
+      min-width: 29px;
+      max-width: 29px;
+      height: 32px;
+      padding: 0;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: crosshair;
+      touch-action: none;
+      position: relative;
+    }
+    .np-cell:hover:not(.locked) { box-shadow: inset 0 0 0 2px #2368eb; }
+    .np-cell.locked {
+      cursor: not-allowed;
+      background-image: repeating-linear-gradient(
+        135deg,
+        transparent 0 5px,
+        rgba(15, 23, 42, .04) 5px 9px
+      );
+    }
+
+    .np-cell.weekend {
+      box-shadow:
+        inset 1px 0 rgba(226, 185, 59, .75),
+        inset -1px 0 rgba(226, 185, 59, .75);
+    }
+    .np-cell.weekend.code-empty { background-color: #fff8d9; }
+    .np-cell.weekend:hover:not(.locked) { box-shadow: inset 0 0 0 2px #2368eb; }
+    .np-cell.smart-focus {
+      outline: 3px solid #2563eb;
+      outline-offset: -2px;
+      z-index: 2;
+      animation: npPulse 1.2s ease-in-out 2;
+    }
+    @keyframes npPulse {
+      0%,100% { box-shadow: inset 0 0 0 2px rgba(37,99,235,.25); }
+      50% { box-shadow: inset 0 0 0 4px rgba(37,99,235,.5); }
+    }
+
+    .code-empty { background-color: #fff; color: #a6afbd; }
+    .code-f { background-color: #e8f3ff; color: #174ea6; }
+    .code-s { background-color: #fff2df; color: #9a4f00; }
+    .code-n { background-color: #ede9fe; color: #5b21b6; }
+    .code-u { background-color: #e8f8f2; color: #087a54; }
+    .code-w { background-color: #f1f5f9; color: #475467; }
+    .code-fb { background-color: #e0f2fe; color: #075985; }
+    .code-k { background-color: #feecec; color: #b42318; }
+    .code-frei { background-color: #f4f4f5; color: #52525b; }
+
+    .np-helper {
+      position: sticky;
+      top: 0;
+      border: 1px solid #dfe4ec;
+      border-radius: 14px;
+      background: #fff;
+      padding: 12px;
+      box-shadow: 0 5px 18px rgba(15,23,42,.05);
+      max-height: 520px;
+      overflow: auto;
+    }
+    .np-helper-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .np-helper-title { font-size: 14px; font-weight: 850; }
+    .np-helper-badge {
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 10px;
+      font-weight: 800;
+      background: #eaf2ff;
+      color: #1d4ed8;
+    }
+    .np-helper-sub {
+      color: #667085;
+      font-size: 11px;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+    .np-helper-good {
+      padding: 10px;
+      border-radius: 10px;
+      background: #ecfdf3;
+      color: #067647;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .np-suggestion {
+      border: 1px solid #e5e9f0;
+      border-radius: 11px;
+      padding: 9px;
+      margin-top: 8px;
+      background: #fbfcfe;
+    }
+    .np-suggestion-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .np-suggestion-shift {
+      font-size: 11px;
+      font-weight: 850;
+      color: #172033;
+    }
+    .np-suggestion-priority {
+      font-size: 9px;
+      font-weight: 800;
+      border-radius: 999px;
+      padding: 2px 6px;
+      background: #fff4df;
+      color: #a85b00;
+    }
+    .np-suggestion-name {
+      font-size: 13px;
+      font-weight: 850;
+      margin-top: 5px;
+      color: #10233f;
+    }
+    .np-suggestion-reason {
+      color: #667085;
+      font-size: 10px;
+      line-height: 1.35;
+      margin-top: 3px;
+    }
+    .np-suggestion-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+      margin-top: 8px;
+    }
+    .np-helper-btn {
+      border: 1px solid #cfd7e4;
+      border-radius: 8px;
+      padding: 6px 7px;
+      background: #fff;
+      color: #344054;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .np-helper-btn:hover { border-color: #2563eb; color: #1d4ed8; }
+    .np-helper-btn.primary {
+      border-color: #2563eb;
+      background: #2563eb;
+      color: #fff;
+    }
+    .np-helper-btn.primary:hover { background: #1d4ed8; color: #fff; }
+
+    .np-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .np-explanation { flex: 1; color: #667085; font-size: 12px; }
+    .np-save {
+      border: 0;
+      border-radius: 9px;
+      background: #2368eb;
+      color: #fff;
+      padding: 9px 18px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .np-save:disabled,
+    .np-action:disabled { opacity: .45; cursor: default; }
+    .np-save:not(:disabled):hover { background: #1d55c2; }
+
+    @media (max-width: 1100px) {
+      .np-layout { grid-template-columns: 1fr; }
+      .np-helper { position: static; max-height: none; }
+    }
+    @media (max-width: 800px) {
+      .np-spacer { display: none; }
+      .np-toolbar-title { width: 100%; }
+      .np-name-cell { width: 105px; min-width: 105px; max-width: 105px; }
+      .np-stat-cell:nth-child(2) { left: 105px; }
+      .np-stat-cell:nth-child(3) { left: 149px; }
+      .np-stat-cell:nth-child(4) { left: 193px; }
+      .np-day, .np-cell { width: 28px; min-width: 28px; max-width: 28px; }
+      .np-footer { align-items: stretch; flex-direction: column; }
+      .np-save { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    const Streamlit = {
+      RENDER_EVENT: "streamlit:render",
+      setComponentReady() {
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:componentReady",
+          apiVersion: 1
+        }, "*");
+      },
+      setFrameHeight(height) {
+        const value = height ?? document.body.scrollHeight;
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setFrameHeight",
+          height: value
+        }, "*");
+      },
+      setComponentValue(value) {
+        window.parent.postMessage({
+          isStreamlitMessage: true,
+          type: "streamlit:setComponentValue",
+          value,
+          dataType: "json"
+        }, "*");
+      }
+    };
+
+    const root = document.getElementById("app");
+
+    let activeBrush = "F";
+    let isPainting = false;
+    let rows = [];
+    let days = [];
+    let initialRows = [];
+    let undoStack = [];
+    let currentVersion = null;
+    let shiftHours = { F: 0, S: 0, N: 0 };
+    let staffingTargets = { F: 5, S: 3, N: 1 };
+
+    const brushItems = [
+      { code: "F", label: "F", title: "Frühdienst" },
+      { code: "S", label: "S", title: "Spätdienst" },
+      { code: "N", label: "N", title: "Nachtdienst" },
+      { code: "Frei", label: "Frei", title: "Arbeitsfrei" },
+      { code: "", label: "⌫", title: "Radierer" },
+    ];
+
+    const shiftNames = {
+      F: "Frühdienst",
+      S: "Spätdienst",
+      N: "Nachtdienst"
+    };
+
+    function copyRows(value) {
+      return JSON.parse(JSON.stringify(value || []));
+    }
+
+    function normalizeCode(value) {
+      const code = String(value || "").trim();
+      return code.toUpperCase() === "FREI" ? "Frei" : code.toUpperCase();
+    }
+
+    function codeClass(code) {
+      const value = normalizeCode(code);
+      if (value === "F") return "code-f";
+      if (value === "S") return "code-s";
+      if (value === "N") return "code-n";
+      if (value === "U") return "code-u";
+      if (value === "W") return "code-w";
+      if (value === "FB") return "code-fb";
+      if (value === "K") return "code-k";
+      if (value === "Frei") return "code-frei";
+      return "code-empty";
+    }
+
+    function numeric(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function roundOne(value) {
+      return Math.round((numeric(value) + Number.EPSILON) * 10) / 10;
+    }
+
+    function hoursForCode(code) {
+      const normalized = normalizeCode(code);
+      return normalized in shiftHours ? numeric(shiftHours[normalized]) : 0;
+    }
+
+    function formatHours(value) {
+      return numeric(value).toFixed(1);
+    }
+
+    function staffingForDay(dayKey) {
+      const counts = { F: 0, S: 0, N: 0 };
+      rows.forEach((row) => {
+        const code = normalizeCode(row.cells?.[dayKey]);
+        if (code in counts) counts[code] += 1;
+      });
+      return counts;
+    }
+
+    function missingForDay(dayKey) {
+      const counts = staffingForDay(dayKey);
+      return {
+        F: Math.max(0, numeric(staffingTargets.F) - counts.F),
+        S: Math.max(0, numeric(staffingTargets.S) - counts.S),
+        N: Math.max(0, numeric(staffingTargets.N) - counts.N),
+      };
+    }
+
+    function trafficStatus(counts) {
+      const missingF = Math.max(0, numeric(staffingTargets.F) - counts.F);
+      const missingS = Math.max(0, numeric(staffingTargets.S) - counts.S);
+      const missingN = Math.max(0, numeric(staffingTargets.N) - counts.N);
+      const missingTotal = missingF + missingS + missingN;
+      if (missingTotal === 0) return "green";
+      if (missingTotal === 1) return "yellow";
+      return "red";
+    }
+
+    function trafficTitle(counts) {
+      const status = trafficStatus(counts);
+      const label =
+        status === "green" ? "Besetzung erfüllt" :
+        status === "yellow" ? "Besetzung knapp" :
+        "Unterbesetzt";
+
+      return `${label} · Früh ${counts.F}/${staffingTargets.F} · Spät ${counts.S}/${staffingTargets.S} · Nacht ${counts.N}/${staffingTargets.N}`;
+    }
+
+    function updateTrafficLights() {
+      days.forEach((day) => {
+        const dot = document.querySelector(`.np-traffic[data-day-key="${day.key}"]`);
+        if (!dot) return;
+        const counts = staffingForDay(day.key);
+        const status = trafficStatus(counts);
+        dot.className = `np-traffic ${status}`;
+        dot.title = trafficTitle(counts);
+        const header = dot.closest(".np-day");
+        if (header) header.title = `${day.full_label || day.key} · ${trafficTitle(counts)}`;
+      });
+    }
+
+    function dayIndex(dayKey) {
+      return days.findIndex((day) => day.key === dayKey);
+    }
+
+    function adjacentCode(row, index, offset) {
+      const other = days[index + offset];
+      if (!other) return "";
+      return normalizeCode(row.cells?.[other.key]);
+    }
+
+    function candidateIsReasonable(row, rowIndex, day, code) {
+      if (!row || row.locked?.[day.key]) return false;
+      const current = normalizeCode(row.cells?.[day.key]);
+      if (current !== "" && current !== "Frei") return false;
+
+      const hours = hoursForCode(code);
+      if (hours > 0 && numeric(row.rest) + 0.05 < hours) return false;
+
+      const index = dayIndex(day.key);
+      const previous = adjacentCode(row, index, -1);
+      const next = adjacentCode(row, index, 1);
+
+      // Einfache Schutzlogik gegen typische problematische Wechsel.
+      if (code === "F" && (previous === "S" || previous === "N")) return false;
+      if (code === "S" && previous === "N") return false;
+      if ((code === "S" || code === "N") && next === "F") return false;
+      if (code === "N" && next === "S") return false;
+
+      return true;
+    }
+
+    function weekendLoad(row) {
+      return days.reduce((total, day) => {
+        if (!day.weekend) return total;
+        const code = normalizeCode(row.cells?.[day.key]);
+        return total + (["F", "S", "N"].includes(code) ? 1 : 0);
+      }, 0);
+    }
+
+    function scoreCandidate(row, day, code) {
+      let score = numeric(row.rest) * 3;
+      const current = normalizeCode(row.cells?.[day.key]);
+
+      if (current === "") score += 12;
+      if (current === "Frei") score -= 6;
+      if (day.weekend) score -= weekendLoad(row) * 2;
+
+      const index = dayIndex(day.key);
+      const previous = adjacentCode(row, index, -1);
+      const next = adjacentCode(row, index, 1);
+      if (!["F", "S", "N"].includes(previous)) score += 2;
+      if (!["F", "S", "N"].includes(next)) score += 2;
+
+      return score;
+    }
+
+    function buildSmartSuggestions() {
+      const suggestions = [];
+
+      days.forEach((day) => {
+        const counts = staffingForDay(day.key);
+        const missing = missingForDay(day.key);
+
+        ["F", "S", "N"].forEach((code) => {
+          if (missing[code] <= 0) return;
+
+          const candidates = rows
+            .map((row, rowIndex) => ({ row, rowIndex }))
+            .filter(({ row, rowIndex }) =>
+              candidateIsReasonable(row, rowIndex, day, code)
+            )
+            .map(({ row, rowIndex }) => ({
+              row,
+              rowIndex,
+              score: scoreCandidate(row, day, code)
+            }))
+            .sort((a, b) => b.score - a.score);
+
+          if (!candidates.length) return;
+
+          const best = candidates[0];
+          const currentCode = normalizeCode(best.row.cells?.[day.key]);
+          const reasonParts = [
+            `${shiftNames[code]} ${counts[code]}/${staffingTargets[code]} besetzt`,
+            `Rest ${formatHours(best.row.rest)} Std.`
+          ];
+          if (currentCode === "Frei") reasonParts.push("aktuell als Frei markiert");
+          if (day.weekend) reasonParts.push("Wochenende berücksichtigt");
+
+          suggestions.push({
+            rowIndex: best.rowIndex,
+            name: best.row.name,
+            dayKey: day.key,
+            dayLabel: day.full_label || day.key,
+            code,
+            missing: missing[code],
+            reason: reasonParts.join(" · "),
+            score: best.score
+          });
+        });
+      });
+
+      return suggestions
+        .sort((a, b) => {
+          if (b.missing !== a.missing) return b.missing - a.missing;
+          return b.score - a.score;
+        })
+        .slice(0, 4);
+    }
+
+    function clearSmartFocus() {
+      document.querySelectorAll(".np-cell.smart-focus").forEach((cell) => {
+        cell.classList.remove("smart-focus");
+      });
+    }
+
+    function focusSuggestion(suggestion) {
+      clearSmartFocus();
+      const cell = document.querySelector(
+        `.np-cell[data-row-index="${suggestion.rowIndex}"][data-day-key="${suggestion.dayKey}"]`
+      );
+      if (!cell) return;
+      cell.classList.add("smart-focus");
+      cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+
+      activeBrush = suggestion.code;
+      document.querySelectorAll(".np-brush").forEach((button) => {
+        button.classList.toggle("active", button.dataset.code === suggestion.code);
+      });
+    }
+
+    function applySuggestion(suggestion) {
+      const row = rows[suggestion.rowIndex];
+      if (!row) return;
+      const cell = document.querySelector(
+        `.np-cell[data-row-index="${suggestion.rowIndex}"][data-day-key="${suggestion.dayKey}"]`
+      );
+      if (!cell || row.locked?.[suggestion.dayKey]) return;
+
+      saveUndo();
+      activeBrush = suggestion.code;
+      paintCell(suggestion.rowIndex, suggestion.dayKey, cell);
+      render();
+    }
+
+    function renderSmartHelper() {
+      const helper = document.createElement("aside");
+      helper.className = "np-helper";
+
+      const suggestions = buildSmartSuggestions();
+      const openCount = days.reduce((total, day) => {
+        const missing = missingForDay(day.key);
+        return total + missing.F + missing.S + missing.N;
+      }, 0);
+
+      const head = document.createElement("div");
+      head.className = "np-helper-head";
+      head.innerHTML = `
+        <div class="np-helper-title">🤖 Smart Helfer</div>
+        <div class="np-helper-badge">${openCount} offen</div>
+      `;
+      helper.appendChild(head);
+
+      const sub = document.createElement("div");
+      sub.className = "np-helper-sub";
+      sub.textContent =
+        "Sucht passende Lösungen für Unterbesetzungen. Vorschläge werden erst nach deinem Klick übernommen.";
+      helper.appendChild(sub);
+
+      if (!suggestions.length) {
+        const good = document.createElement("div");
+        good.className = "np-helper-good";
+        good.textContent = openCount === 0
+          ? "✓ Die Mindestbesetzung ist aktuell erfüllt."
+          : "Keine sichere einfache Empfehlung gefunden. Bitte Plan manuell prüfen.";
+        helper.appendChild(good);
+        return helper;
+      }
+
+      suggestions.forEach((suggestion, index) => {
+        const card = document.createElement("div");
+        card.className = "np-suggestion";
+
+        const top = document.createElement("div");
+        top.className = "np-suggestion-top";
+        top.innerHTML = `
+          <div class="np-suggestion-shift">${suggestion.code} · ${suggestion.dayLabel}</div>
+          <div class="np-suggestion-priority">${index === 0 ? "Beste Lösung" : "Alternative"}</div>
+        `;
+        card.appendChild(top);
+
+        const name = document.createElement("div");
+        name.className = "np-suggestion-name";
+        name.textContent = `${suggestion.name} → ${shiftNames[suggestion.code]}`;
+        card.appendChild(name);
+
+        const reason = document.createElement("div");
+        reason.className = "np-suggestion-reason";
+        reason.textContent = suggestion.reason;
+        card.appendChild(reason);
+
+        const actions = document.createElement("div");
+        actions.className = "np-suggestion-actions";
+
+        const showButton = document.createElement("button");
+        showButton.type = "button";
+        showButton.className = "np-helper-btn";
+        showButton.textContent = "Im Plan zeigen";
+        showButton.addEventListener("click", () => focusSuggestion(suggestion));
+        actions.appendChild(showButton);
+
+        const applyButton = document.createElement("button");
+        applyButton.type = "button";
+        applyButton.className = "np-helper-btn primary";
+        applyButton.textContent = "Übernehmen";
+        applyButton.addEventListener("click", () => applySuggestion(suggestion));
+        actions.appendChild(applyButton);
+
+        card.appendChild(actions);
+        helper.appendChild(card);
+      });
+
+      return helper;
+    }
+
+    function updateRowStats(rowIndex) {
+      const row = rows[rowIndex];
+      const tableRow = document.querySelector(`tr[data-row-index="${rowIndex}"]`);
+      if (!row || !tableRow) return;
+      const actualCell = tableRow.querySelector(".np-stat-actual");
+      const restCell = tableRow.querySelector(".np-stat-rest");
+      if (actualCell) actualCell.textContent = formatHours(row.actual);
+      if (restCell) restCell.textContent = formatHours(row.rest);
+    }
+
+    function saveUndo() {
+      undoStack.push(copyRows(rows));
+      if (undoStack.length > 50) undoStack.shift();
+    }
+
+    function paintCell(rowIndex, dayKey, cell) {
+      const row = rows[rowIndex];
+      if (!row || row.locked?.[dayKey]) return;
+
+      const previous = normalizeCode(row.cells?.[dayKey]);
+      const next = normalizeCode(activeBrush);
+      if (previous === next) return;
+
+      const isWeekend = cell.classList.contains("weekend");
+      row.actual = roundOne(
+        numeric(row.actual) - hoursForCode(previous) + hoursForCode(next)
+      );
+      row.rest = roundOne(numeric(row.target) - numeric(row.actual));
+      row.cells[dayKey] = next;
+
+      cell.textContent = next;
+      cell.className = `np-cell ${codeClass(next)}${isWeekend ? " weekend" : ""}`;
+      cell.dataset.locked = "false";
+      cell.dataset.rowIndex = String(rowIndex);
+      cell.dataset.dayKey = dayKey;
+
+      updateRowStats(rowIndex);
+      updateDirtyState();
+      updateTrafficLights();
+    }
+
+    function updateDirtyState() {
+      const dirty = JSON.stringify(rows) !== JSON.stringify(initialRows);
+      const saveButton = document.getElementById("save-plan");
+      const resetButton = document.getElementById("reset-plan");
+      if (saveButton) saveButton.disabled = !dirty;
+      if (resetButton) resetButton.disabled = !dirty;
+    }
+
+    function renderToolbar() {
+      const toolbar = document.createElement("div");
+      toolbar.className = "np-toolbar";
+
+      const hint = document.createElement("div");
+      hint.className = "np-toolbar-title";
+      hint.textContent = "Dienst auswählen";
+      toolbar.appendChild(hint);
+
+      brushItems.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.code = item.code;
+        button.className = `np-brush ${codeClass(item.code)}`;
+        if (item.code === activeBrush) button.classList.add("active");
+        button.textContent = item.label;
+        button.title = item.title;
+
+        button.addEventListener("click", () => {
+          activeBrush = item.code;
+          document.querySelectorAll(".np-brush").forEach((element) => {
+            element.classList.remove("active");
+          });
+          button.classList.add("active");
+        });
+
+        toolbar.appendChild(button);
+      });
+
+      const spacer = document.createElement("div");
+      spacer.className = "np-spacer";
+      toolbar.appendChild(spacer);
+
+      const undoButton = document.createElement("button");
+      undoButton.type = "button";
+      undoButton.className = "np-action secondary";
+      undoButton.textContent = "↶ Rückgängig";
+      undoButton.addEventListener("click", () => {
+        const previous = undoStack.pop();
+        if (previous) {
+          rows = previous;
+          render();
+        }
+      });
+      toolbar.appendChild(undoButton);
+
+      const resetButton = document.createElement("button");
+      resetButton.type = "button";
+      resetButton.id = "reset-plan";
+      resetButton.className = "np-action secondary";
+      resetButton.textContent = "Zurücksetzen";
+      resetButton.addEventListener("click", () => {
+        saveUndo();
+        rows = copyRows(initialRows);
+        render();
+      });
+      toolbar.appendChild(resetButton);
+
+      return toolbar;
+    }
+
+    function renderTable() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "np-grid-wrap";
+
+      const table = document.createElement("table");
+      table.className = "np-grid";
+
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+
+      const nameHeader = document.createElement("th");
+      nameHeader.className = "np-name-cell np-name-header";
+      nameHeader.textContent = "Mitarbeitende";
+      headerRow.appendChild(nameHeader);
+
+      ["Soll", "Ist", "Rest"].forEach((label) => {
+        const th = document.createElement("th");
+        th.className = "np-stat-cell np-stat-header";
+        th.textContent = label;
+        headerRow.appendChild(th);
+      });
+
+      days.forEach((day) => {
+        const th = document.createElement("th");
+        th.className = day.weekend ? "np-day weekend" : "np-day";
+        const counts = staffingForDay(day.key);
+        const status = trafficStatus(counts);
+        th.title = `${day.full_label || day.key} · ${trafficTitle(counts)}`;
+        th.innerHTML =
+          `<span>${day.day}</span><small>${day.weekday}</small>` +
+          `<i class="np-traffic ${status}" data-day-key="${day.key}" title="${trafficTitle(counts)}"></i>`;
+        headerRow.appendChild(th);
+      });
+
+      head.appendChild(headerRow);
+      table.appendChild(head);
+
+      const body = document.createElement("tbody");
+
+      rows.forEach((row, rowIndex) => {
+        const tr = document.createElement("tr");
+        tr.dataset.rowIndex = String(rowIndex);
+
+        const nameCell = document.createElement("th");
+        nameCell.className = "np-name-cell";
+        nameCell.textContent = row.name;
+        nameCell.title = row.name;
+        tr.appendChild(nameCell);
+
+        [
+          ["target", "np-stat-target"],
+          ["actual", "np-stat-actual"],
+          ["rest", "np-stat-rest"],
+        ].forEach(([key, className]) => {
+          const td = document.createElement("td");
+          td.className = `np-stat-cell ${className}`;
+          td.textContent = formatHours(row[key]);
+          tr.appendChild(td);
+        });
+
+        days.forEach((day) => {
+          const value = normalizeCode(row.cells?.[day.key]);
+          const locked = Boolean(row.locked?.[day.key]);
+
+          const td = document.createElement("td");
+          td.className =
+            `np-cell ${codeClass(value)}` +
+            `${day.weekend ? " weekend" : ""}` +
+            `${locked ? " locked" : ""}`;
+
+          td.textContent = value;
+          td.dataset.locked = String(locked);
+          td.dataset.rowIndex = String(rowIndex);
+          td.dataset.dayKey = day.key;
+          td.title = locked
+            ? `${row.name} · ${day.full_label}: geschützte Abwesenheit`
+            : `${row.name} · ${day.full_label}`;
+
+          td.addEventListener("pointerdown", (event) => {
+            if (locked) return;
+            event.preventDefault();
+            saveUndo();
+            isPainting = true;
+            paintCell(rowIndex, day.key, td);
+          });
+
+          td.addEventListener("pointerenter", (event) => {
+            if (!isPainting || locked) return;
+            event.preventDefault();
+            paintCell(rowIndex, day.key, td);
+          });
+
+          tr.appendChild(td);
+        });
+
+        body.appendChild(tr);
+      });
+
+      table.appendChild(body);
+      wrapper.appendChild(table);
+      return wrapper;
+    }
+
+    function renderFooter() {
+      const footer = document.createElement("div");
+      footer.className = "np-footer";
+
+      const explanation = document.createElement("div");
+      explanation.className = "np-explanation";
+      explanation.textContent =
+        "Klicken oder mit gedrückter Maustaste über mehrere Felder ziehen. Smart-Helfer-Vorschläge werden erst nach Klick übernommen.";
+      footer.appendChild(explanation);
+
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.id = "save-plan";
+      saveButton.className = "np-save";
+      saveButton.textContent = "Dienste übernehmen";
+      saveButton.addEventListener("click", () => {
+        const token = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        Streamlit.setComponentValue({
+          token,
+          rows: copyRows(rows)
+        });
+      });
+
+      footer.appendChild(saveButton);
+      return footer;
+    }
+
+    function render() {
+      root.innerHTML = "";
+      root.appendChild(renderToolbar());
+
+      const layout = document.createElement("div");
+      layout.className = "np-layout";
+      layout.appendChild(renderTable());
+      layout.appendChild(renderSmartHelper());
+      root.appendChild(layout);
+
+      root.appendChild(renderFooter());
+
+      updateDirtyState();
+      updateTrafficLights();
+
+      requestAnimationFrame(() => {
+        Streamlit.setFrameHeight(document.body.scrollHeight + 6);
+      });
+    }
+
+    function onRender(args) {
+      const incomingVersion = String(args.plan_version ?? "");
+      days = Array.isArray(args.days) ? args.days : [];
+      shiftHours = {
+        F: numeric(args.shift_hours?.F),
+        S: numeric(args.shift_hours?.S),
+        N: numeric(args.shift_hours?.N),
+      };
+
+      // Falls app.py später die Mindestbesetzung mitsendet, wird sie automatisch benutzt.
+      staffingTargets = {
+        F: Math.max(0, numeric(args.staffing_targets?.F ?? 5)),
+        S: Math.max(0, numeric(args.staffing_targets?.S ?? 3)),
+        N: Math.max(0, numeric(args.staffing_targets?.N ?? 1)),
+      };
+
+      if (currentVersion !== incomingVersion) {
+        rows = copyRows(args.rows);
+        initialRows = copyRows(args.rows);
+        undoStack = [];
+        currentVersion = incomingVersion;
+      }
+
+      render();
+    }
+
+    window.addEventListener("message", (event) => {
+      const data = event.data || {};
+      if (data.type !== Streamlit.RENDER_EVENT) return;
+      onRender(data.args || {});
+    });
+
+    document.addEventListener("pointerup", () => {
+      isPainting = false;
+    });
+
+    document.addEventListener("pointercancel", () => {
+      isPainting = false;
+    });
+
+    Streamlit.setComponentReady();
+    Streamlit.setFrameHeight(620);
+  </script>
+</body>
+</html>
